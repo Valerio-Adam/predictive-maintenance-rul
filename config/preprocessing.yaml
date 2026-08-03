@@ -1,0 +1,6 @@
+machines_per_type:
+  L: 4
+  M: 4
+  H: 4
+
+bucket_size: 100
