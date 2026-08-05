@@ -1,0 +1,44 @@
+services:
+  # Defines the PostgreSQL relational database service instance.
+  # This service stores structured entity metadata and historical failure events.
+  postgres:
+    # Uses the official lightweight PostgreSQL 15 image based on Alpine Linux
+    image: postgres:15-alpine
+    
+    # Custom container name assigned for easy reference in Docker management commands
+    container_name: maintenance_postgres
+    
+    # Automatic restart policy: keeps the container running if it crashes or the machine reboots
+    restart: always
+    
+    # Environment variables pass initial configuration settings to the Postgres container upon creation.
+    environment:
+      # Sets the primary administrator username (you can customize this value if preferred)
+      POSTGRES_USER: admin
+      
+      # Sets the password for the primary administrator account (used by local scripts to connect)
+      POSTGRES_PASSWORD: adminpassword
+      
+      # Specifies the default database name created automatically on container initialization
+      POSTGRES_DB: predictive_maintenance
+      
+    # Port mapping configuration: [HOST_PORT:CONTAINER_PORT]
+    # Maps local port 5432 on your machine to port 5432 inside the Docker container,
+    # allowing Python scripts on your local host to connect via localhost:5432.
+    ports:
+      - "5432:5432"
+      
+    # Storage volume mounts for data persistence and initial setup execution
+    volumes:
+      # Mounts a named Docker volume to store PostgreSQL data files permanently on disk.
+      # Prevents database data loss when stopping or destroying the container.
+      - postgres_data:/var/lib/postgresql/data
+      
+      # Mounts your custom init.sql schema initialization file into Postgres' startup folder.
+      # PostgreSQL automatically executes all .sql files in this entrypoint directory
+      # the very first time the database container is initialized.
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+# Persistent named storage volumes declaration managed by Docker Engine
+volumes:
+  postgres_data:
