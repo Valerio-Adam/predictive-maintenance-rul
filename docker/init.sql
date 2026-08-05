@@ -1,47 +1,44 @@
--- #==========================================
+-- #====================================================================
 -- Schema Initialization Script for PostgreSQL
--- Data Engineering Setup
--- ==========================================
+-- Predictive Maintenance Telemetry Pipeline
+-- Dataset: AI4I 2020 Predictive Maintenance (Stephan Matzka, 2020)
+-- =====================================================================
 
--- Create a custom ENUM type for product quality variants
--- Restricts machine quality variants exclusively to 'L' (Low), 'M' (Medium), or 'H' (High)
-CREATE TYPE product_type_enum AS ENUM ('L', 'M', 'H');
+-- Create custom ENUM type for product quality variants
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'product_type_enum') THEN
+        CREATE TYPE product_type_enum AS ENUM ('L', 'M', 'H');
+    END IF;
+END $$;
 
--- Create 'machines' table
--- Acts as the dimension table storing static metadata about each machine
-CREATE TABLE IF NOT EXISTS machines (
-    product_id VARCHAR(20) PRIMARY KEY,          -- Unique identifier for each machine (e.g., 'M14860')
-    product_type product_type_enum NOT NULL      -- Quality variant enforced by the ENUM type
+-- Drop table if it exists to ensure idempotent initialization during local setup
+DROP TABLE IF EXISTS process_telemetry CASCADE;
+
+-- Create 'process_telemetry' table
+-- Stores 10,000 sequential manufacturing process cycles in exact chronological order
+CREATE TABLE process_telemetry (
+    udi INT PRIMARY KEY,                         -- Unique Data Identifier (1-10000) preserving cycle sequence
+    product_id VARCHAR(20) NOT NULL,             -- Item variant prefix ('L'/'M'/'H') and serial number
+    product_type product_type_enum NOT NULL,     -- Product quality variant ('L'=Low 50%, 'M'=Medium 30%, 'H'=High 20%)
+    
+    -- Physical Process Parameters & Sensor Telemetry
+    air_temp_k NUMERIC(5, 2) NOT NULL,           -- Ambient air temperature in Kelvin (generated via random walk)
+    process_temp_k NUMERIC(5, 2) NOT NULL,       -- Process temperature in Kelvin (coupled to air temperature + 10 K)
+    rotational_speed_rpm INT NOT NULL,           -- Spindle rotational speed in RPM (derived from 2860 W power)
+    torque_nm NUMERIC(5, 2) NOT NULL,             -- Spindle torque in Nm (normally distributed around 40 Nm)
+    tool_wear_min INT NOT NULL,                  -- Cumulative tool wear in minutes (+2/3/5 min per L/M/H variant)
+    
+    -- Target Label & Independent Failure Modes
+    machine_failure INT NOT NULL,                -- Global failure target (1 if any independent failure mode is triggered)
+    twf INT DEFAULT 0,                           -- Tool Wear Failure flag (tool replacement/failure between 200-240 min)
+    hdf INT DEFAULT 0,                           -- Heat Dissipation Failure flag (temp diff < 8.6 K and speed < 1380 rpm)
+    pwf INT DEFAULT 0,                           -- Power Failure flag (process power < 3500 W or > 9000 W)
+    osf INT DEFAULT 0,                           -- Overstrain Failure flag (tool wear * torque exceeds variant threshold)
+    rnf INT DEFAULT 0,                           -- Random Failure flag (0.1% chance independent process failure)
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Record creation timestamp in PostgreSQL
 );
 
--- Create 'failure_types' lookup table
--- Stores master data describing all specific types of machine failure
-CREATE TABLE IF NOT EXISTS failure_types (
-    failure_code VARCHAR(10) PRIMARY KEY,        -- Short identifier code (e.g., 'TWF', 'HDF')
-    failure_name VARCHAR(100) NOT NULL,          -- Full descriptive name of the failure mode
-    description TEXT                             -- Detailed explanation of failure cause
-);
-
--- Pre-populate lookup data for 'failure_types'
--- Inserts standard failure definitions; skips insertion if codes already exist
-INSERT INTO failure_types (failure_code, failure_name, description) VALUES
-    ('TWF', 'Tool Wear Failure', 'Failure caused by tool wear over time'),
-    ('HDF', 'Heat Dissipation Failure', 'Failure caused by excessive heat build-up'),
-    ('PWF', 'Power Failure', 'Failure caused by power limits exceeding bounds'),
-    ('OSF', 'Overstrain Failure', 'Failure caused by overstrain due to torque/time'),
-    ('RNF', 'Random Failure', 'Unexplained or random process failure')
-ON CONFLICT (failure_code) DO NOTHING;
-
--- Create 'maintenance_events' fact table
--- Captures specific failure occurrences alongside sensor metrics recorded at failure time
-CREATE TABLE IF NOT EXISTS maintenance_events (
-    event_id SERIAL PRIMARY KEY,                                              -- Auto-incrementing unique identifier
-    product_id VARCHAR(20) REFERENCES machines(product_id) ON DELETE CASCADE, -- Foreign key to machines
-    failure_code VARCHAR(10) REFERENCES failure_types(failure_code),          -- Foreign key to failure_types
-    air_temp_k NUMERIC(5, 2),                                                 -- Air temperature in Kelvin
-    process_temp_k NUMERIC(5, 2),                                             -- Process temperature in Kelvin
-    rotational_speed_rpm INT,                                                 -- Rotational speed in RPM
-    torque_nm NUMERIC(5, 2),                                                  -- Torque in Newton-meters
-    tool_wear_min INT,                                                        -- Accumulated tool wear in minutes
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP                            -- Automatic insertion timestamp
-);
+-- Index to optimize sequential and time-series analytical queries ordered by UDI
+CREATE INDEX idx_process_telemetry_udi ON process_telemetry(udi);
